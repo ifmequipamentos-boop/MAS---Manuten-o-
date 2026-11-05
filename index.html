@@ -3,6 +3,7 @@
 <title>MAS Manutenção</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#edf2f5;color:#142636;font:16px system-ui}header{background:#102c40;color:white;padding:28px 20px}header div,main{max-width:740px;margin:auto}h1,h2{margin:0 0 12px}header p{margin:0;color:#bfd8e6}main{padding:18px}.card{background:white;border-radius:14px;padding:19px;margin:14px 0;border:1px solid #d9e3eb}nav{display:flex;gap:8px;flex-wrap:wrap}label{display:block;margin:12px 0}input,select,textarea,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #96aaba}input:not([type=checkbox]),select,textarea{display:block;width:100%;margin-top:5px}button{background:#075b75;color:white;cursor:pointer}button[aria-pressed=false]{background:white;color:#17475d}small{color:#425b6c}fieldset{border:1px solid #cbd9e4;border-radius:8px}fieldset label{display:inline-block;margin:5px 12px 5px 0}li{margin-bottom:10px;overflow-wrap:anywhere}output{display:block;color:#075b75;margin-top:10px}
+#entries summary{cursor:pointer;font-weight:600}#entries li{padding:10px 0;border-bottom:1px solid #d9e3eb}.event-details dt{font-weight:600;margin-top:10px}.event-details dd{margin:3px 0 0;white-space:pre-wrap}
 </style>
 <header><div><h1>MAS Manutenção</h1><p>Rastreio de equipamentos recuperados</p></div></header>
 <main><small>Protótipo local • use dados fictícios. Os registros ficam neste navegador.</small>
@@ -29,7 +30,16 @@
 <label>Ação <select id="action" name="action"></select></label>
 <div id="service">
 <label>Nota fiscal do serviço <input name="invoice" maxlength="30"></label>
-<fieldset><legend>Peças trocadas</legend><div id="parts"></div></fieldset></div>
+<label>Ordem de serviço <input name="order" maxlength="50"></label>
+<label>Técnico responsável <input name="technician" maxlength="120"></label>
+<label>Data da execução <input name="performedOn" type="date"></label>
+<label>Descrição completa do serviço <textarea name="description" rows="6"></textarea></label>
+<label>Defeito relatado e diagnóstico <textarea name="diagnosis" rows="3"></textarea></label>
+<fieldset><legend>Peças trocadas</legend><div id="parts"></div></fieldset>
+<label>Outras peças, códigos e quantidades <textarea name="otherParts" rows="3"></textarea></label>
+<label>Testes realizados e resultados <textarea name="tests" rows="3"></textarea></label>
+<label>Condição final e recomendações <textarea name="outcome" rows="3"></textarea></label>
+</div>
 <label id="machineLabel" hidden>Em qual máquina foi instalado? <input name="machine" maxlength="100" placeholder="Ex. Envasadora 02 — TAG ENV-02"></label>
 <label>Observações <textarea name="notes" maxlength="500"></textarea></label>
 <button>Registrar</button></form>
@@ -1559,6 +1569,16 @@ const key = 'mas-manutencao-demo-v1';
 let assets = [];
 try { assets = JSON.parse(localStorage.getItem(key) || '[]'); } catch {}
 let isCustomer = false;
+const serviceFields = {
+  order: 'Ordem de serviço',
+  technician: 'Técnico responsável',
+  performedOn: 'Data da execução',
+  description: 'Descrição completa do serviço',
+  diagnosis: 'Defeito relatado e diagnóstico',
+  otherParts: 'Outras peças, códigos e quantidades',
+  tests: 'Testes realizados e resultados',
+  outcome: 'Condição final e recomendações'
+};
 for (const part of ['Kit de reparo','Diafragma','Gaxetas','Haste','Eixo','Turbina']) {
   const label = document.createElement('label');
   const box = document.createElement('input');
@@ -1595,7 +1615,30 @@ function render(tag = el('asset').value) {
   el('entries').replaceChildren();
   for (const event of (a?.events || []).slice().reverse()) {
     const item = document.createElement('li');
-    item.textContent = [new Date(event.date).toLocaleString('pt-BR'), event.action, event.machine, event.invoice && 'NF '+event.invoice, event.parts.join(', '), event.notes].filter(Boolean).join(' · ');
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = [new Date(event.date).toLocaleString('pt-BR'), event.action, event.order && 'OS ' + event.order].filter(Boolean).join(' · ');
+    const fields = document.createElement('dl');
+    fields.className = 'event-details';
+    const values = [
+      ['TAG', a.tag], ['Equipamento', a.kind], ['Cliente', a.client],
+      ['Nota fiscal do equipamento', a.invoice], ['Máquina de instalação', event.machine],
+      ['Nota fiscal do serviço', event.invoice], ['Peças trocadas', event.parts?.join(', ')],
+      ...Object.entries(serviceFields).map(([name, label]) => [
+        label, name === 'performedOn' && event[name] ? event[name].split('-').reverse().join('/') : event[name]
+      ]),
+      ['Observações', event.notes]
+    ];
+    for (const [label, value] of values) {
+      if (!value) continue;
+      const term = document.createElement('dt');
+      const definition = document.createElement('dd');
+      term.textContent = label;
+      definition.textContent = value;
+      fields.append(term, definition);
+    }
+    details.append(summary, fields);
+    item.append(details);
     el('entries').append(item);
   }
 }
@@ -1662,6 +1705,9 @@ el('event').onsubmit = e => {
     return;
   }
   const event = {date: new Date().toISOString(), action, machine, invoice:isCustomer ? '' : data.get('invoice').trim(), parts:isCustomer ? [] : data.getAll('parts'), notes:data.get('notes').trim()};
+  if (!isCustomer) {
+    for (const name of Object.keys(serviceFields)) event[name] = data.get(name).trim();
+  }
   if (save(assets.map(a => a === asset ? {...a, events:[...a.events, event]} : a))) {
     e.currentTarget.reset(); actionChanged(); render();
     el('message').textContent = 'Registro salvo na demonstração.';
