@@ -46,6 +46,11 @@
 <button>Registrar</button></form>
 <output id="message" role="status"></output>
 <p><a id="sendRequest" target="_blank" rel="noopener noreferrer" hidden>Enviar solicitação pelo WhatsApp</a></p></section>
+<section class="card" id="requestPanel" hidden>
+<h2>Solicitações de manutenção</h2>
+<p id="requestAlert" role="status" aria-live="polite"></p>
+<div id="requestList"></div>
+</section>
 <section class="card" id="history"><h2>Histórico de manutenção</h2><ol id="entries"></ol></section>
 </main>
 <style>[hidden]{display:none!important}</style>
@@ -1600,6 +1605,59 @@ function formatDate(date) {
 function selected() {
   return assets.find(a => a.tag === el('asset').value && (!isCustomer || a.client === el('client').value));
 }
+const stages = ['Solicitada', 'Recebida', 'Em avaliação', 'Em manutenção', 'Em testes', 'Concluída', 'Entregue'];
+function isRequest(event) {
+  return ['Solicitar manutenção', 'Solicitar assistência'].includes(event.action);
+}
+function renderRequests(selectedAsset) {
+  const panel = el('requestPanel');
+  const list = el('requestList');
+  list.replaceChildren();
+  panel.hidden = isCustomer && !selectedAsset;
+  const requests = (isCustomer ? (selectedAsset ? [selectedAsset] : []) : assets)
+    .flatMap(asset => asset.events.filter(isRequest).map(event => ({asset, event})))
+    .sort((a, b) => b.event.date.localeCompare(a.event.date));
+  const pending = requests.filter(({event}) => !event.progress?.length).length;
+  const alert = el('requestAlert');
+  alert.textContent = requests.length === 0 ? 'Nenhuma solicitação registrada.'
+    : !isCustomer && pending ? '⚠ Solicitações aguardando recebimento: ' + pending
+    : isCustomer ? 'Acompanhe as etapas abaixo.' : 'Todas as solicitações foram recebidas.';
+  alert.style.fontWeight = !isCustomer && pending ? 'bold' : '';
+  for (const {asset, event} of requests) {
+    const progress = event.progress || [];
+    const section = document.createElement('section');
+    const title = document.createElement('h3');
+    title.textContent = [asset.tag, asset.client, stages[progress.length]].join(' · ');
+    const description = document.createElement('p');
+    description.textContent = event.notes || '';
+    const timeline = document.createElement('ol');
+    for (const [index, date] of [event.date, ...progress].entries()) {
+      const item = document.createElement('li');
+      item.textContent = stages[index] + ' · ' + new Date(date).toLocaleString('pt-BR');
+      timeline.append(item);
+    }
+    section.append(title, description, timeline);
+    if (!isCustomer && progress.length < stages.length - 1) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = progress.length ? 'Avançar para ' + stages[progress.length + 1] : 'Marcar como recebido';
+      button.onclick = () => {
+        const updated = {...event, progress: [...progress, new Date().toISOString()]};
+        const next = assets.map(a => a === asset
+          ? {...a, events: a.events.map(entry => entry === event ? updated : entry)}
+          : a);
+        if (save(next)) render();
+      };
+      section.append(button);
+    }
+    list.append(section);
+  }
+}
+window.addEventListener('storage', event => {
+  if (event.storageArea !== localStorage || event.key !== key) return;
+  try { assets = JSON.parse(event.newValue || '[]'); } catch { return; }
+  render();
+});
 function render(tag = el('asset').value) {
   el('sendRequest').hidden = true;
   const client = el('client').value;
@@ -1609,6 +1667,7 @@ function render(tag = el('asset').value) {
   el('asset').replaceChildren(...list.map(a => new Option(a.tag + ' · ' + a.kind, a.tag)));
   if (list.some(a => a.tag === tag)) el('asset').value = tag;
   const a = selected();
+  renderRequests(a);
   el('details').textContent = a ? [a.client, !isCustomer && a.invoice && 'NF '+a.invoice].filter(Boolean).join(' · ') : 'Nenhum equipamento cadastrado.';
   const lastInstallation = a?.events.slice().reverse().find(event => event.action === 'Registrar instalação' && event.machine);
   el('location').hidden = !a;
