@@ -1607,8 +1607,30 @@ function selected() {
   return assets.find(a => a.tag === el('asset').value && (!isCustomer || a.client === el('client').value));
 }
 const stages = ['Solicitada', 'Recebida', 'Em avaliação', 'Em manutenção', 'Em testes', 'Concluída', 'Entregue'];
+const openMaintenance = 'Abrir manutenção para cliente';
+const waitingApproval = 'Aguardando autorização';
+const approved = 'Autorizada para manutenção';
+const rejected = 'Não aprovada';
+const returned = 'Devolvida sem manutenção';
+const nextStatuses = {
+  'Solicitada': ['Recebida'],
+  'Recebida': ['Em avaliação'],
+  'Em avaliação': [waitingApproval],
+  [waitingApproval]: [approved, rejected],
+  [approved]: ['Em manutenção'],
+  [rejected]: [returned],
+  'Em manutenção': ['Em testes'],
+  'Em testes': ['Concluída'],
+  'Concluída': ['Entregue']
+};
+function maintenanceTimeline(event) {
+  const initial = event.action === openMaintenance ? 'Aberta pela MAS' : stages[0];
+  const updates = (event.progress || []).map((entry, index) =>
+    typeof entry === 'string' ? {status: stages[index + 1], date: entry} : entry);
+  return [{status: initial, date: event.date}, ...updates];
+}
 function isRequest(event) {
-  return ['Solicitar manutenção', 'Solicitar assistência'].includes(event.action);
+  return ['Solicitar manutenção', 'Solicitar assistência', openMaintenance].includes(event.action);
 }
 function renderRequests(selectedAsset) {
   const panel = el('requestPanel');
@@ -1618,7 +1640,7 @@ function renderRequests(selectedAsset) {
   const requests = (isCustomer ? (selectedAsset ? [selectedAsset] : []) : assets)
     .flatMap(asset => asset.events.filter(isRequest).map(event => ({asset, event})))
     .sort((a, b) => b.event.date.localeCompare(a.event.date));
-  const pending = requests.filter(({event}) => !event.progress?.length).length;
+  const pending = requests.filter(({event}) => event.action !== openMaintenance && !event.progress?.length).length;
   const alarm = el('maintenanceAlarm');
   alarm.replaceChildren();
   if (!isCustomer && pending) {
@@ -1640,24 +1662,27 @@ function renderRequests(selectedAsset) {
   alert.style.fontWeight = !isCustomer && pending ? 'bold' : '';
   for (const {asset, event} of requests) {
     const progress = event.progress || [];
+    const entries = maintenanceTimeline(event);
+    const current = entries[entries.length - 1].status;
     const section = document.createElement('section');
     const title = document.createElement('h3');
-    title.textContent = [asset.tag, asset.client, stages[progress.length]].join(' · ');
+    title.textContent = [asset.tag, asset.client, current].join(' · ');
     const description = document.createElement('p');
     description.textContent = event.notes || '';
     const timeline = document.createElement('ol');
-    for (const [index, date] of [event.date, ...progress].entries()) {
+    for (const {status, date} of entries) {
       const item = document.createElement('li');
-      item.textContent = stages[index] + ' · ' + new Date(date).toLocaleString('pt-BR');
+      item.textContent = status + ' · ' + new Date(date).toLocaleString('pt-BR');
       timeline.append(item);
     }
     section.append(title, description, timeline);
-    if (!isCustomer && progress.length < stages.length - 1) {
+    const options = current === 'Aberta pela MAS' ? ['Recebida'] : nextStatuses[current] || [];
+    for (const status of isCustomer ? [] : options) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = progress.length ? 'Avançar para ' + stages[progress.length + 1] : 'Marcar como recebido';
+      button.textContent = status === 'Recebida' ? 'Marcar como recebido' : status;
       button.onclick = () => {
-        const updated = {...event, progress: [...progress, new Date().toISOString()]};
+        const updated = {...event, progress: [...progress, {status, date: new Date().toISOString()}]};
         const next = assets.map(a => a === asset
           ? {...a, events: a.events.map(entry => entry === event ? updated : entry)}
           : a);
@@ -1729,7 +1754,7 @@ function mode(customer) {
   el('mas').setAttribute('aria-pressed', String(!customer));
   el('customer').setAttribute('aria-pressed', String(customer));
   el('event').reset();
-  el('action').replaceChildren(...(customer ? ['Registrar instalação','Solicitar manutenção'] : ['Registrar manutenção']).map(a => new Option(a)));
+  el('action').replaceChildren(...(customer ? ['Registrar instalação','Solicitar manutenção'] : [openMaintenance, 'Registrar manutenção']).map(a => new Option(a)));
   actionChanged();
   el('message').textContent = '';
   render();
@@ -1740,7 +1765,9 @@ function actionChanged() {
   el('event').elements.machine.required = install;
   el('installedOnLabel').hidden = !install;
   el('event').elements.installedOn.required = install;
-  const request = el('action').value === 'Solicitar manutenção';
+  const opening = el('action').value === openMaintenance;
+  el('service').hidden = isCustomer || opening;
+  const request = el('action').value === 'Solicitar manutenção' || opening;
   el('notesLabel').textContent = request ? 'Descreva o problema' : 'Observações';
   el('event').elements.notes.required = request;
   el('sendRequest').hidden = true;
@@ -1803,12 +1830,12 @@ el('event').onsubmit = e => {
   }
   const request = action === 'Solicitar manutenção';
   const notes = data.get('notes').trim();
-  if (request && !notes) {
+  if ((request || action === openMaintenance) && !notes) {
     el('message').textContent = 'Descreva o problema para solicitar manutenção.';
     return;
   }
   const event = {date: new Date().toISOString(), action, machine, installedOn, invoice:isCustomer ? '' : data.get('invoice').trim(), parts:isCustomer ? [] : data.getAll('parts'), notes};
-  if (!isCustomer) {
+  if (!isCustomer && action !== openMaintenance) {
     for (const name of Object.keys(serviceFields)) event[name] = data.get(name).trim();
   }
   if (save(assets.map(a => a === asset ? {...a, events:[...a.events, event]} : a))) {
@@ -1819,6 +1846,8 @@ el('event').onsubmit = e => {
       el('sendRequest').href = 'https://wa.me/5547999880234?text=' + encodeURIComponent(message);
       el('sendRequest').hidden = false;
       el('message').textContent = 'Solicitação salva neste navegador. Toque no link e confirme o envio no WhatsApp.';
+    } else if (action === openMaintenance) {
+      el('message').textContent = 'Manutenção aberta para ' + asset.client + ' · TAG ' + asset.tag + '.';
     } else {
       el('message').textContent = installedOn ? 'Instalação registrada neste navegador.' : 'Registro salvo neste navegador.';
     }
