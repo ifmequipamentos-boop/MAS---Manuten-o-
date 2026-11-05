@@ -41,9 +41,11 @@
 <label>Condição final e recomendações <textarea name="outcome" rows="3"></textarea></label>
 </div>
 <label id="machineLabel" hidden>Em qual máquina foi instalado? <input name="machine" maxlength="100" placeholder="Ex. Envasadora 02 — TAG ENV-02"></label>
-<label>Observações <textarea name="notes" maxlength="500"></textarea></label>
+<label id="installedOnLabel" hidden>Data da instalação <input type="date" name="installedOn"></label>
+<label><span id="notesLabel">Observações</span> <textarea name="notes" maxlength="500"></textarea></label>
 <button>Registrar</button></form>
-<output id="message" role="status"></output></section>
+<output id="message" role="status"></output>
+<p><a id="sendRequest" target="_blank" rel="noopener noreferrer" hidden>Enviar solicitação pelo WhatsApp</a></p></section>
 <section class="card" id="history"><h2>Histórico de manutenção</h2><ol id="entries"></ol></section>
 </main>
 <style>[hidden]{display:none!important}</style>
@@ -1592,10 +1594,14 @@ function save(next) {
   assets = next;
   return true;
 }
+function formatDate(date) {
+  return date.split('-').reverse().join('/');
+}
 function selected() {
   return assets.find(a => a.tag === el('asset').value && (!isCustomer || a.client === el('client').value));
 }
 function render(tag = el('asset').value) {
+  el('sendRequest').hidden = true;
   const client = el('client').value;
   el('client').replaceChildren(...[...new Set(assets.map(a => a.client))].map(name => new Option(name)));
   if ([...el('client').options].some(o => o.value === client)) el('client').value = client;
@@ -1607,7 +1613,7 @@ function render(tag = el('asset').value) {
   const lastInstallation = a?.events.slice().reverse().find(event => event.action === 'Registrar instalação' && event.machine);
   el('location').hidden = !a;
   el('location').textContent = lastInstallation
-    ? 'Última máquina registrada: ' + lastInstallation.machine
+    ? 'Última máquina registrada: ' + lastInstallation.machine + (lastInstallation.installedOn ? ' · Instalação em ' + formatDate(lastInstallation.installedOn) : '')
     : 'Máquina de instalação ainda não informada.';
   el('event').hidden = !a;
   el('generateQR').hidden = !a || isCustomer;
@@ -1623,6 +1629,7 @@ function render(tag = el('asset').value) {
     const values = [
       ['TAG', a.tag], ['Equipamento', a.kind], ['Cliente', a.client],
       ['Nota fiscal do equipamento', a.invoice], ['Máquina de instalação', event.machine],
+      ['Data da instalação', event.installedOn && formatDate(event.installedOn)],
       ['Nota fiscal do serviço', event.invoice], ['Peças trocadas', event.parts?.join(', ')],
       ...Object.entries(serviceFields).map(([name, label]) => [
         label, name === 'performedOn' && event[name] ? event[name].split('-').reverse().join('/') : event[name]
@@ -1648,7 +1655,7 @@ function mode(customer) {
   el('mas').setAttribute('aria-pressed', String(!customer));
   el('customer').setAttribute('aria-pressed', String(customer));
   el('event').reset();
-  el('action').replaceChildren(...(customer ? ['Registrar instalação','Solicitar assistência'] : ['Registrar manutenção']).map(a => new Option(a)));
+  el('action').replaceChildren(...(customer ? ['Registrar instalação','Solicitar manutenção'] : ['Registrar manutenção']).map(a => new Option(a)));
   actionChanged();
   el('message').textContent = '';
   render();
@@ -1657,6 +1664,12 @@ function actionChanged() {
   const install = el('action').value === 'Registrar instalação';
   el('machineLabel').hidden = !install;
   el('event').elements.machine.required = install;
+  el('installedOnLabel').hidden = !install;
+  el('event').elements.installedOn.required = install;
+  const request = el('action').value === 'Solicitar manutenção';
+  el('notesLabel').textContent = request ? 'Descreva o problema' : 'Observações';
+  el('event').elements.notes.required = request;
+  el('sendRequest').hidden = true;
 }
 el('generateQR').onclick = () => {
   const asset = selected();
@@ -1709,17 +1722,32 @@ el('event').onsubmit = e => {
   const data = new FormData(e.currentTarget);
   const action = el('action').value;
   const machine = action === 'Registrar instalação' ? data.get('machine').trim() : '';
-  if (action === 'Registrar instalação' && !machine) {
-    el('message').textContent = 'Informe a máquina ou linha.';
+  const installedOn = action === 'Registrar instalação' ? data.get('installedOn') : '';
+  if (action === 'Registrar instalação' && (!machine || !installedOn)) {
+    el('message').textContent = 'Informe a máquina ou linha e a data da instalação.';
     return;
   }
-  const event = {date: new Date().toISOString(), action, machine, invoice:isCustomer ? '' : data.get('invoice').trim(), parts:isCustomer ? [] : data.getAll('parts'), notes:data.get('notes').trim()};
+  const request = action === 'Solicitar manutenção';
+  const notes = data.get('notes').trim();
+  if (request && !notes) {
+    el('message').textContent = 'Descreva o problema para solicitar manutenção.';
+    return;
+  }
+  const event = {date: new Date().toISOString(), action, machine, installedOn, invoice:isCustomer ? '' : data.get('invoice').trim(), parts:isCustomer ? [] : data.getAll('parts'), notes};
   if (!isCustomer) {
     for (const name of Object.keys(serviceFields)) event[name] = data.get(name).trim();
   }
   if (save(assets.map(a => a === asset ? {...a, events:[...a.events, event]} : a))) {
     e.currentTarget.reset(); actionChanged(); render();
-    el('message').textContent = 'Registro salvo na demonstração.';
+    if (request) {
+      const message = ['Solicitação de manutenção — MAS', 'Cliente: ' + asset.client,
+        'Equipamento: ' + asset.kind, 'TAG: ' + asset.tag, 'Problema: ' + notes].join('\n');
+      el('sendRequest').href = 'https://wa.me/5547999880234?text=' + encodeURIComponent(message);
+      el('sendRequest').hidden = false;
+      el('message').textContent = 'Solicitação salva neste navegador. Toque no link e confirme o envio no WhatsApp.';
+    } else {
+      el('message').textContent = installedOn ? 'Instalação registrada neste navegador.' : 'Registro salvo neste navegador.';
+    }
   }
 };
 mode(false);
