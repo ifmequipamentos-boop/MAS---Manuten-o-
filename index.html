@@ -1621,8 +1621,6 @@ const returned = 'Devolvida sem manutenção';
 const nextStatuses = {
   'Solicitada': ['Recebida'],
   'Recebida': ['Em avaliação'],
-  'Em avaliação': [waitingApproval],
-  [waitingApproval]: [approved, rejected],
   [approved]: ['Em manutenção'],
   [rejected]: [returned],
   'Em manutenção': ['Em testes'],
@@ -1683,10 +1681,19 @@ function renderRequests(selectedAsset) {
     }
     section.append(title, description, timeline);
     const options = current === 'Aberta pela MAS' ? ['Recebida'] : nextStatuses[current] || [];
-    for (const status of isCustomer ? [] : options) {
+    const awaitingDecision = current === 'Em avaliação' || current === waitingApproval;
+    const availableStatuses = isCustomer ? (awaitingDecision ? [approved, rejected] : []) : options;
+    if (awaitingDecision) {
+      const instruction = document.createElement('p');
+      instruction.textContent = isCustomer ? 'Você autoriza a manutenção desta peça?' : 'Aguardando decisão do cliente.';
+      section.append(instruction);
+    }
+    for (const status of availableStatuses) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = status === 'Recebida' ? 'Marcar como recebido' : status;
+      if (status === approved) button.textContent = 'Aprovar manutenção';
+      if (status === rejected) button.textContent = 'Reprovar manutenção';
       button.onclick = () => {
         const updated = {...event, progress: [...progress, {status, date: new Date().toISOString()}]};
         const next = assets.map(a => a === asset
