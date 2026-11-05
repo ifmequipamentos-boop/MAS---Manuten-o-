@@ -8,6 +8,7 @@
 <header><div><h1>MAS Manutenção</h1><p>Rastreio de equipamentos recuperados</p></div></header>
 <main><small>Protótipo local • use dados fictícios. Os registros ficam neste navegador.</small>
 <nav aria-label="Área de demonstração"><button id="mas" aria-pressed="true">Equipe MAS</button><button id="customer" aria-pressed="false">Simular cliente</button></nav>
+<div id="maintenanceAlarm" role="status" aria-live="polite" style="position:sticky;top:0;z-index:2"></div>
 <section class="card" id="register"><h2>Cadastrar equipamento</h2>
 <form id="equipment">
 <label>Cliente <input name="client" required maxlength="100"></label>
@@ -1618,6 +1619,20 @@ function renderRequests(selectedAsset) {
     .flatMap(asset => asset.events.filter(isRequest).map(event => ({asset, event})))
     .sort((a, b) => b.event.date.localeCompare(a.event.date));
   const pending = requests.filter(({event}) => !event.progress?.length).length;
+  const alarm = el('maintenanceAlarm');
+  alarm.replaceChildren();
+  if (!isCustomer && pending) {
+    const link = document.createElement('a');
+    link.href = '#requestPanel';
+    link.style.cssText = 'display:block;background:#9a3412;color:white;padding:12px;border-radius:8px;font-weight:700';
+    link.textContent = pending === 1 ? '⚠ 1 solicitação aguarda recebimento · Ver pedido'
+      : '⚠ ' + pending + ' solicitações aguardam recebimento · Ver pedidos';
+    link.onclick = event => {
+      event.preventDefault();
+      panel.scrollIntoView({block: 'center'});
+    };
+    alarm.append(link);
+  }
   const alert = el('requestAlert');
   alert.textContent = requests.length === 0 ? 'Nenhuma solicitação registrada.'
     : !isCustomer && pending ? '⚠ Solicitações aguardando recebimento: ' + pending
