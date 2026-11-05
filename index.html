@@ -16,12 +16,18 @@
 <label>TAG permanente <input name="tag" required maxlength="40" placeholder="Ex. MAS-001"></label>
 <label>Número da nota fiscal <input name="invoice" maxlength="30"></label>
 <button>Cadastrar</button></form></section>
-<section class="card"><h2>Equipamentos</h2>
+<section class="card" id="pieceCard"><h2>Identidade da peça</h2>
+<label>Fotografar ou escolher foto do QR Code <input type="file" id="qrPhoto" accept="image/*"></label>
+<output id="scanStatus" role="status"></output>
 <label id="customerFilter" hidden>Cliente da demonstração <select id="client"></select></label>
 <label>Escolher pela TAG <select id="asset"></select></label>
+<h3 id="pieceIdentity" hidden></h3>
 <p id="details"></p>
 <p id="location" hidden></p>
 <button type="button" id="generateQR" hidden>Gerar QR Code</button>
+<button type="button" id="forwardPiece" hidden>Encaminhar para manutenção</button>
+<p><a id="sharePiece" target="_blank" rel="noopener noreferrer" hidden>Compartilhar ficha pelo WhatsApp</a></p>
+<button type="button" id="sharePhoto" hidden>Compartilhar foto do QR e link</button>
 <div id="qrResult" hidden>
 <p><img id="qrImage" width="180" height="180" alt=""></p>
 <p><a id="qrDownload">Baixar SVG para gravação</a></p>
@@ -1707,6 +1713,7 @@ function render(tag = el('asset').value) {
   el('asset').replaceChildren(...list.map(a => new Option(a.tag + ' · ' + a.kind, a.tag)));
   if (list.some(a => a.tag === tag)) el('asset').value = tag;
   const a = selected();
+  renderPiece(a);
   renderRequests(a);
   el('details').textContent = a ? [a.client, !isCustomer && a.invoice && 'NF '+a.invoice].filter(Boolean).join(' · ') : 'Nenhum equipamento cadastrado.';
   const lastInstallation = a?.events.slice().reverse().find(event => event.action === 'Registrar instalação' && event.machine);
@@ -1772,19 +1779,95 @@ function actionChanged() {
   el('event').elements.notes.required = request;
   el('sendRequest').hidden = true;
 }
+let matchedPhoto = null;
+function pieceUrl(tag) {
+  const link = new URL(window.location.href);
+  link.search = '';
+  link.hash = '';
+  link.searchParams.set('tag', tag);
+  return link;
+}
+function renderPiece(asset) {
+  const identity = el('pieceIdentity');
+  const share = el('sharePiece');
+  identity.hidden = !asset;
+  identity.textContent = asset ? asset.tag + ' · ' + asset.kind : '';
+  el('forwardPiece').hidden = !asset;
+  share.hidden = !asset || location.protocol !== 'https:';
+  if (!share.hidden) {
+    share.href = 'https://wa.me/?text=' + encodeURIComponent('Ficha MAS · ' + asset.tag + '\n' + pieceUrl(asset.tag).href);
+  }
+  el('sharePhoto').hidden = share.hidden || matchedPhoto?.tag !== asset?.tag ||
+    !matchedPhoto || !navigator.canShare?.({files: [matchedPhoto.file]});
+}
+el('forwardPiece').onclick = () => {
+  const asset = selected();
+  if (!asset) return;
+  el('action').value = isCustomer ? 'Solicitar manutenção' : openMaintenance;
+  actionChanged();
+  el('event').elements.notes.focus();
+};
+el('sharePhoto').onclick = async () => {
+  const asset = selected();
+  if (!asset || matchedPhoto?.tag !== asset.tag) return;
+  try {
+    await navigator.share({files: [matchedPhoto.file], text: 'Ficha MAS · ' + asset.tag, url: pieceUrl(asset.tag).href});
+  } catch (error) {
+    if (error.name !== 'AbortError') el('scanStatus').textContent = 'Compartilhe o link pelo WhatsApp e anexe a foto na conversa.';
+  }
+};
+el('qrPhoto').onchange = async event => {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  matchedPhoto = null;
+  renderPiece(selected());
+  if (!file) return;
+  const status = el('scanStatus');
+  const fallback = 'Use a Câmera ou o app Fotos para ler o QR, ou selecione a TAG abaixo.';
+  if (!('BarcodeDetector' in window)) {
+    status.textContent = fallback;
+    return;
+  }
+  status.textContent = 'Lendo foto do QR Code…';
+  try {
+    const detector = new BarcodeDetector({formats: ['qr_code']});
+    const image = await createImageBitmap(file);
+    let codes;
+    try { codes = await detector.detect(image); } finally { image.close(); }
+    if (input.files[0] !== file) return;
+    const tags = new Set();
+    for (const {rawValue} of codes) {
+      let tag = rawValue.trim();
+      try {
+        const url = new URL(tag);
+        if (url.origin !== location.origin) continue;
+        tag = url.searchParams.get('tag');
+      } catch {}
+      if (tag) tags.add(tag);
+    }
+    const matches = assets.filter(asset => tags.has(asset.tag) &&
+      (!isCustomer || asset.client === el('client').value));
+    if (matches.length !== 1) {
+      status.textContent = matches.length ? 'Fotografe apenas um QR Code por vez.' : 'Nenhuma peça disponível para este QR. ' + fallback;
+      return;
+    }
+    matchedPhoto = {tag: matches[0].tag, file};
+    render(matches[0].tag);
+    status.textContent = 'Ficha localizada pela TAG ' + matches[0].tag + '.';
+  } catch {
+    if (input.files[0] === file) status.textContent = fallback;
+  }
+};
 el('generateQR').onclick = () => {
   const asset = selected();
   if (!asset || isCustomer) return;
   try {
-    const link = new URL(window.location.href);
+    const link = pieceUrl(asset.tag);
     if (!['https:', 'http:'].includes(link.protocol) || ['localhost', '127.0.0.1', '[::1]'].includes(link.hostname)) {
       clearQR();
       el('message').textContent = 'Abra o endereço publicado do app para gerar o QR Code.';
       return;
     }
-    link.search = '';
-    link.hash = '';
-    link.searchParams.set('tag', asset.tag);
     const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(qrSvg(link.href));
     el('qrImage').src = url;
     el('qrImage').alt = 'QR Code da TAG ' + asset.tag;
@@ -1858,11 +1941,12 @@ const linkedTag = new URLSearchParams(window.location.search).get('tag');
 if (linkedTag !== null) {
   if (assets.some(asset => asset.tag === linkedTag)) {
     render(linkedTag);
-    requestAnimationFrame(() => el('history').scrollIntoView());
+    requestAnimationFrame(() => el('pieceCard').scrollIntoView());
   } else {
     el('asset').selectedIndex = -1;
     render();
     el('asset').selectedIndex = -1;
+    renderPiece(null);
     el('details').textContent = 'Equipamento indisponível neste navegador. Consulte no navegador onde o histórico foi salvo ou selecione outro equipamento.';
     el('location').hidden = true;
     el('event').hidden = true;
