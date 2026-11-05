@@ -24,7 +24,7 @@
 <div id="qrResult" hidden>
 <p><img id="qrImage" width="180" height="180" alt=""></p>
 <p><a id="qrDownload">Baixar SVG para gravação</a></p>
-<small>O QR Code contém a TAG permanente do equipamento.</small>
+<small>Escaneie para abrir o histórico da peça no navegador em que os registros foram salvos.</small>
 </div>
 <form id="event" hidden>
 <label>Ação <select id="action" name="action"></select></label>
@@ -1662,7 +1662,16 @@ el('generateQR').onclick = () => {
   const asset = selected();
   if (!asset || isCustomer) return;
   try {
-    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(qrSvg(asset.tag));
+    const link = new URL(window.location.href);
+    if (!['https:', 'http:'].includes(link.protocol) || ['localhost', '127.0.0.1', '[::1]'].includes(link.hostname)) {
+      clearQR();
+      el('message').textContent = 'Abra o endereço publicado do app para gerar o QR Code.';
+      return;
+    }
+    link.search = '';
+    link.hash = '';
+    link.searchParams.set('tag', asset.tag);
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(qrSvg(link.href));
     el('qrImage').src = url;
     el('qrImage').alt = 'QR Code da TAG ' + asset.tag;
     el('qrDownload').href = url;
@@ -1714,5 +1723,21 @@ el('event').onsubmit = e => {
   }
 };
 mode(false);
+const linkedTag = new URLSearchParams(window.location.search).get('tag');
+if (linkedTag !== null) {
+  if (assets.some(asset => asset.tag === linkedTag)) {
+    render(linkedTag);
+    requestAnimationFrame(() => el('history').scrollIntoView());
+  } else {
+    el('asset').selectedIndex = -1;
+    render();
+    el('asset').selectedIndex = -1;
+    el('details').textContent = 'Equipamento indisponível neste navegador. Consulte no navegador onde o histórico foi salvo ou selecione outro equipamento.';
+    el('location').hidden = true;
+    el('event').hidden = true;
+    el('generateQR').hidden = true;
+    el('entries').replaceChildren();
+  }
+}
 </script>
 </html>
