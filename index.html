@@ -1682,24 +1682,53 @@ function renderRequests(selectedAsset) {
     section.append(title, description, timeline);
     const options = current === 'Aberta pela MAS' ? ['Recebida'] : nextStatuses[current] || [];
     const awaitingDecision = current === 'Em avaliação' || current === waitingApproval;
-    const availableStatuses = isCustomer ? (awaitingDecision ? [approved, rejected] : []) : options;
-    if (awaitingDecision) {
+    const saveRequest = updated => {
+      const next = assets.map(a => a === asset
+        ? {...a, events: a.events.map(entry => entry === event ? updated : entry)}
+        : a);
+      if (save(next)) render();
+    };
+    if (event.proposal) {
+      const proposal = document.createElement('p');
+      proposal.style.whiteSpace = 'pre-wrap';
+      const price = new Intl.NumberFormat('pt-BR', {style: 'currency', currency: 'BRL'}).format(event.proposal.price);
+      proposal.textContent = ['Proposta de manutenção', event.proposal.scope, 'Valor: ' + price,
+        'Prazo: ' + event.proposal.deadline].join('\n');
+      section.append(proposal);
+    } else if (awaitingDecision && !isCustomer) {
+      const form = document.createElement('form');
+      form.innerHTML = '<label>Serviço proposto<textarea name="scope" required maxlength="1500"></textarea></label>' +
+        '<label>Valor em reais<input name="price" type="number" min="0" step="0.01" required></label>' +
+        '<label>Prazo estimado<input name="deadline" required maxlength="120" placeholder="Ex. 5 dias úteis após aprovação"></label>' +
+        '<button>Disponibilizar proposta ao cliente</button>';
+      form.onsubmit = submitEvent => {
+        submitEvent.preventDefault();
+        const data = new FormData(form);
+        const scope = data.get('scope').trim();
+        const deadline = data.get('deadline').trim();
+        if (!scope || !deadline) {
+          el('message').textContent = 'Informe o serviço proposto e o prazo.';
+          return;
+        }
+        saveRequest({...event, proposal: {scope, deadline, price: Number(data.get('price'))},
+          progress: [...progress, {status: waitingApproval, date: new Date().toISOString()}]});
+      };
+      section.append(form);
+    } else if (awaitingDecision) {
       const instruction = document.createElement('p');
-      instruction.textContent = isCustomer ? 'Você autoriza a manutenção desta peça?' : 'Aguardando decisão do cliente.';
+      instruction.textContent = 'Aguardando proposta da MAS.';
       section.append(instruction);
     }
+    const availableStatuses = isCustomer ? (awaitingDecision && event.proposal ? [approved, rejected] : []) : options;
     for (const status of availableStatuses) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = status === 'Recebida' ? 'Marcar como recebido' : status;
-      if (status === approved) button.textContent = 'Aprovar manutenção';
-      if (status === rejected) button.textContent = 'Reprovar manutenção';
+      if (status === approved) button.textContent = 'Aprovar proposta';
+      if (status === rejected) button.textContent = 'Recusar proposta';
       button.onclick = () => {
         const updated = {...event, progress: [...progress, {status, date: new Date().toISOString()}]};
-        const next = assets.map(a => a === asset
-          ? {...a, events: a.events.map(entry => entry === event ? updated : entry)}
-          : a);
-        if (save(next)) render();
+        saveRequest(updated);
       };
       section.append(button);
     }
