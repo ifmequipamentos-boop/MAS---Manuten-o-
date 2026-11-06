@@ -1702,13 +1702,14 @@ function renderRequests(selectedAsset) {
         pdf.textContent = 'Baixar proposta em PDF · ' + event.proposal.pdf.name;
         section.append(pdf);
       }
-    } else if (awaitingDecision && !isCustomer) {
+    } else if (!isCustomer && (current === 'Recebida' || awaitingDecision)) {
       const form = document.createElement('form');
       form.innerHTML = '<label>Serviço proposto<textarea name="scope" required maxlength="1500"></textarea></label>' +
         '<label>Valor em reais<input name="price" type="number" min="0" step="0.01" required></label>' +
         '<label>Prazo estimado<input name="deadline" required maxlength="120" placeholder="Ex. 5 dias úteis após aprovação"></label>' +
         '<label>Proposta em PDF (opcional, até 1 MB)<input type="file" name="pdf" accept=".pdf,application/pdf"></label>' +
-        '<button>Disponibilizar proposta ao cliente</button><output role="status"></output>';
+        '<button>' + (current === 'Recebida' ? 'Enviar para avaliação com proposta' : 'Disponibilizar proposta ao cliente') +
+        '</button><output role="status"></output>';
       form.onsubmit = async submitEvent => {
         submitEvent.preventDefault();
         const data = new FormData(form);
@@ -1739,8 +1740,10 @@ function renderRequests(selectedAsset) {
             proposal.pdf = {name: file.name, data: encoded};
           }
           if (isCustomer || !form.isConnected || !assets.includes(asset)) return;
-          saveRequest({...event, proposal,
-            progress: [...progress, {status: waitingApproval, date: new Date().toISOString()}]});
+          const date = new Date().toISOString();
+          const updates = current === 'Recebida' ? [{status: 'Em avaliação', date}] : [];
+          if (current !== waitingApproval) updates.push({status: waitingApproval, date});
+          saveRequest({...event, proposal, progress: [...progress, ...updates]});
           if (form.isConnected) status.textContent = 'Não foi possível salvar. Verifique o espaço disponível no navegador.';
         } catch {
           status.textContent = 'Não foi possível ler o PDF. Selecione o arquivo novamente.';
@@ -1759,6 +1762,7 @@ function renderRequests(selectedAsset) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = status === 'Recebida' ? 'Marcar como recebido' : status;
+      if (status === 'Em avaliação') button.textContent = 'Enviar para avaliação sem proposta';
       if (status === approved) button.textContent = 'Aprovar proposta';
       if (status === rejected) button.textContent = 'Recusar proposta';
       button.onclick = () => {
