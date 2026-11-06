@@ -1695,13 +1695,21 @@ function renderRequests(selectedAsset) {
       proposal.textContent = ['Proposta de manutenção', event.proposal.scope, 'Valor: ' + price,
         'Prazo: ' + event.proposal.deadline].join('\n');
       section.append(proposal);
+      if (event.proposal.pdf) {
+        const pdf = document.createElement('a');
+        pdf.href = 'data:application/pdf;base64,' + event.proposal.pdf.data;
+        pdf.download = event.proposal.pdf.name;
+        pdf.textContent = 'Baixar proposta em PDF · ' + event.proposal.pdf.name;
+        section.append(pdf);
+      }
     } else if (awaitingDecision && !isCustomer) {
       const form = document.createElement('form');
       form.innerHTML = '<label>Serviço proposto<textarea name="scope" required maxlength="1500"></textarea></label>' +
         '<label>Valor em reais<input name="price" type="number" min="0" step="0.01" required></label>' +
         '<label>Prazo estimado<input name="deadline" required maxlength="120" placeholder="Ex. 5 dias úteis após aprovação"></label>' +
-        '<button>Disponibilizar proposta ao cliente</button>';
-      form.onsubmit = submitEvent => {
+        '<label>Proposta em PDF (opcional, até 1 MB)<input type="file" name="pdf" accept=".pdf,application/pdf"></label>' +
+        '<button>Disponibilizar proposta ao cliente</button><output role="status"></output>';
+      form.onsubmit = async submitEvent => {
         submitEvent.preventDefault();
         const data = new FormData(form);
         const scope = data.get('scope').trim();
@@ -1710,8 +1718,35 @@ function renderRequests(selectedAsset) {
           el('message').textContent = 'Informe o serviço proposto e o prazo.';
           return;
         }
-        saveRequest({...event, proposal: {scope, deadline, price: Number(data.get('price'))},
-          progress: [...progress, {status: waitingApproval, date: new Date().toISOString()}]});
+        const proposal = {scope, deadline, price: Number(data.get('price'))};
+        const file = form.elements.pdf.files[0];
+        const button = form.querySelector('button');
+        const status = form.querySelector('output');
+        status.textContent = '';
+        button.disabled = true;
+        try {
+          if (file) {
+            if (file.size > 1_000_000 || await file.slice(0, 5).text() !== '%PDF-') {
+              status.textContent = 'Selecione um PDF válido de até 1 MB.';
+              return;
+            }
+            const encoded = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result.split(',')[1]);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(file);
+            });
+            proposal.pdf = {name: file.name, data: encoded};
+          }
+          if (isCustomer || !form.isConnected || !assets.includes(asset)) return;
+          saveRequest({...event, proposal,
+            progress: [...progress, {status: waitingApproval, date: new Date().toISOString()}]});
+          if (form.isConnected) status.textContent = 'Não foi possível salvar. Verifique o espaço disponível no navegador.';
+        } catch {
+          status.textContent = 'Não foi possível ler o PDF. Selecione o arquivo novamente.';
+        } finally {
+          button.disabled = false;
+        }
       };
       section.append(form);
     } else if (awaitingDecision) {
